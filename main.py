@@ -69,6 +69,23 @@ def generate_html(location_name, date_str, tide_events):
     print("成功產生安平潮汐 HTML 網頁：anping_tide.html")
 
 
+def find_key_recursive(data, target_key):
+    """遞迴搜尋 JSON 結構中指定的 Key"""
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if k.lower() == target_key.lower():
+                return v
+            res = find_key_recursive(v, target_key)
+            if res is not None:
+                return res
+    elif isinstance(data, list):
+        for item in data:
+            res = find_key_recursive(item, target_key)
+            if res is not None:
+                return res
+    return None
+
+
 def get_anping_tide():
     api_key = os.environ.get("CWA_API_KEY", "").strip()
 
@@ -81,97 +98,93 @@ def get_anping_tide():
     print("=" * 40)
 
     url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-A0021-001"
-    # Swagger 規範：LocationName 帶入 LocationName 參數，格式建議為 LocationName=安平
-    params = {
-        "Authorization": api_key,
-        "LocationName": "安平",
-    }
+    params = {"Authorization": api_key, "LocationName": "安平"}
 
     try:
         response = requests.get(url, params=params, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            records = data.get("records", {})
 
-            # 依據 Swagger Schema：records 下方包含 Location 陣列或 TideForecasts 結構
+            # 全局遞迴搜尋 Location / TideForecasts 陣列
             locations = (
-                records.get("Location", [])
-                or records.get("location", [])
-                or records.get("TideForecasts", [])
+                find_key_recursive(data, "Location")
+                or find_key_recursive(data, "TideForecasts")
+                or []
             )
 
-            # 若特定過濾無資料，拉取全部進行比對
-            if not locations:
-                res_all = requests.get(
-                    url, params={"Authorization": api_key}, timeout=10
-                )
-                records_all = res_all.json().get("records", {})
-                locations = (
-                    records_all.get("Location", [])
-                    or records_all.get("location", [])
-                    or records_all.get("TideForecasts", [])
-                )
-
-            target_loc = None
-            for loc in locations:
-                loc_name = str(
-                    loc.get("LocationName") or loc.get("locationName") or ""
-                )
-                if "安平" in loc_name:
-                    target_loc = loc
-                    break
-
-            if not target_loc and locations:
-                target_loc = locations[0]
-
-            if not target_loc:
-                print("錯誤：無法找到潮汐測站資料")
+            if not locations or not isinstance(locations, list):
+                print("錯誤：無法尋獲 Location 節點列表。")
                 return
 
-            location_name = target_loc.get(
-                "LocationName"
-            ) or target_loc.get("locationName", "台南安平")
+            target_loc = locations[0]
+            location_name = "台南安平"
 
-            # 解析 Daily 潮汐預報
-            daily_periods = []
-            if "LocationPeriods" in target_loc:
-                daily_periods = target_loc["LocationPeriods"].get("Daily", [])
-            elif "validTime" in target_loc:
-                daily_periods = target_loc.get("validTime", [])
-
-            if not daily_periods:
-                print("錯誤：未找到潮汐預報每日數據 (Daily/validTime)")
-                return
-
-            today_data = daily_periods[0]
-            date_str = str(
-                today_data.get("Date")
-                or today_data.get("startTime", "")[:10]
+            # 全局尋找預報日期的陣列 (Daily / validTime / LocationPeriods)
+            daily_data = (
+                find_key_recursive(target_loc, "Daily")
+                or find_key_recursive(target_loc, "validTime")
+                or find_key_recursive(target_loc, "LocationPeriods")
             )
 
-            # 解析 TimePeriods (乾潮/滿潮時間點與潮高)
+            if isinstance(daily_data, dict):
+                daily_data = [daily_data]
+
+            if not daily_data or not isinstance(daily_data, list):
+                print("錯誤：找不到每日預報列表，請檢查 API 回傳結構。")
+                return
+
+            today_item = daily_data[0]
+            date_str = (
+                today_item.get("Date")
+                or today_item.get("startTime", "")[:10]
+                or "今日預報"
+            )
+
+            # 全局尋找乾滿潮點陣列 (TimePeriods / tideTime)
             time_periods = (
-                today_data.get("TimePeriods", [])
-                or today_data.get("tideTime", [])
+                find_key_recursive(today_item, "TimePeriods")
+                or find_key_recursive(today_item, "tideTime")
+                or []
             )
+
+            if not time_periods or not isinstance(time_periods, list):
+                # 嘗試直接從 today_item 抓取所有包含 Tide 的 dict
+                time_periods = [
+                    v
+                    for v in today_item.values()
+                    if isinstance(v, list) and len(v) > 0
+                ]
+                if time_periods:
+                    time_periods = time_periods[0]
 
             tide_events = []
             for tp in time_periods:
-                tide_type = tp.get("Tide") or tp.get("tide") or "潮汐"
-                raw_time = tp.get("DateTime") or tp.get("time") or "--:--"
+                if not isinstance(tp, dict):
+                    continue
+
+                tide_type = (
+                    tp.get("Tide")
+                    or tp.get("tide")
+                    or tp.get("TideStatus")
+                    or "潮汐"
+                )
+                raw_time = (
+                    tp.get("DateTime")
+                    or tp.get("time")
+                    or tp.get("TideTime")
+                    or "--:--"
+                )
                 time_display = (
                     raw_time[-8:-3] if len(raw_time) >= 8 else raw_time
                 )
 
-                # 解析 TideHeights 下的 AboveTWVD (臺灣高程基準) 潮高
+                # 尋找潮高
                 height = "--"
-                tide_heights = tp.get("TideHeights") or {}
-                if isinstance(tide_heights, dict):
-                    height = tide_heights.get("AboveTWVD") or tide_heights.get(
-                        "AboveTWVD_cm", "--"
-                    )
+                height_data = find_key_recursive(tp, "AboveTWVD")
+                if height_data is not None:
+                    height = height_data
                 elif "height" in tp:
-                    height = tp.get("height")
+                    height = tp["height"]
 
                 tide_events.append(
                     {
