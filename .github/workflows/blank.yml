@@ -26,24 +26,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
-      # 4. 執行 Python 腳本抓取安平潮汐網頁
-      - name: Execute main.py
-        run: python main.py
-
-      # 5. 將產生的 anping_tide.html 自動 Commit 並 Push 回 GitHub 專案
-      - name: Commit and push changes
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add anping_tide.html
-          git commit -m "Auto update Anping tide data [skip ci]" || exit 0
-          git push
-
+      # 4. 執行 Python 腳本並傳入 API Key Secret
       - name: Execute main.py
         env:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
         run: python main.py
 
+      # 5. 將產生的 anping_tide.html 自動 Commit 並 Push 回 GitHub 專案
       - name: Commit and push changes
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
