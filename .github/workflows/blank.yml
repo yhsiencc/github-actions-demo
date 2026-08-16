@@ -1,16 +1,31 @@
-name: My First Workflow
+name: Run Python Script Demo
 
 on:
-  workflow_dispatch: # 允許在網頁上手動按按鈕觸發
+  workflow_dispatch: # 保留網頁手動觸發按鈕
   push:
-    branches: [ "main" ] # 當 main 分支有異動時觸發
+    branches: [ "main" ]
 
 jobs:
-  test-job:
+  run-python:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Check out repository code
+      # 1. 將儲存庫中的程式碼（包含 main.py）下載到虛擬機上
+      - name: Checkout repository code
         uses: actions/checkout@v4
 
-      - name: Run a one-line script
-        run: echo "Hello, GitHub Actions is working!"
+      # 2. 安裝並設定 Python 環境
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 3. 安裝需要的第三方套件（若不需要可省略此步驟）
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      # 4. 執行你的 Python 腳本
+      - name: Execute main.py
+        run: python main.py
