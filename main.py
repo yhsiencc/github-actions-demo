@@ -71,7 +71,7 @@ def generate_html(location_name, date_str, tide_events):
 
 
 def get_anping_tide():
-    # 優先嘗試從 GitHub Secrets 讀取 API Key，若無則讀取環境變數
+    # 從環境變數讀取 API Key
     api_key = os.environ.get("CWA_API_KEY", "").strip()
 
     if not api_key:
