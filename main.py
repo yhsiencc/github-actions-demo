@@ -52,7 +52,7 @@ def generate_html(location_name, date_str, tide_events):
                 <tr>
                     <th>狀態</th>
                     <th>時間</th>
-                    <th>潮高</th>
+                    <th>潮高 (TWVD)</th>
                 </tr>
             </thead>
             <tbody>
@@ -81,6 +81,7 @@ def get_anping_tide():
     print("=" * 40)
 
     url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-A0021-001"
+    # Swagger 規範：LocationName 帶入 LocationName 參數，格式建議為 LocationName=安平
     params = {
         "Authorization": api_key,
         "LocationName": "安平",
@@ -92,75 +93,91 @@ def get_anping_tide():
             data = response.json()
             records = data.get("records", {})
 
-            # 氣象署 F-A0021-001 JSON 相容性解析
-            location_list = []
-            if "TideForecasts" in records:
-                location_list = records["TideForecasts"]
-            elif "location" in records:
-                location_list = records["location"]
+            # 依據 Swagger Schema：records 下方包含 Location 陣列或 TideForecasts 結構
+            locations = (
+                records.get("Location", [])
+                or records.get("location", [])
+                or records.get("TideForecasts", [])
+            )
 
-            if not location_list:
-                # 備用方案：若 LocationName 查詢過濾空值，則不限制過濾條件直接搜尋
-                print("警報：未直接找到 location 陣列，嘗試全局檢索...")
+            # 若特定過濾無資料，拉取全部進行比對
+            if not locations:
                 res_all = requests.get(
                     url, params={"Authorization": api_key}, timeout=10
                 )
-                records = res_all.json().get("records", {})
-                all_locs = records.get("TideForecasts", []) or records.get(
-                    "location", []
+                records_all = res_all.json().get("records", {})
+                locations = (
+                    records_all.get("Location", [])
+                    or records_all.get("location", [])
+                    or records_all.get("TideForecasts", [])
                 )
-                location_list = [
-                    loc
-                    for loc in all_locs
-                    if loc.get("LocationName") == "安平"
-                    or loc.get("locationName") == "安平"
-                ]
 
-            if not location_list:
-                print("錯誤：未能取得安平潮汐資料，請檢查地點名稱。")
+            target_loc = None
+            for loc in locations:
+                loc_name = str(
+                    loc.get("LocationName") or loc.get("locationName") or ""
+                )
+                if "安平" in loc_name:
+                    target_loc = loc
+                    break
+
+            if not target_loc and locations:
+                target_loc = locations[0]
+
+            if not target_loc:
+                print("錯誤：無法找到潮汐測站資料")
                 return
 
-            target_loc = location_list[0]
             location_name = target_loc.get(
                 "LocationName"
-            ) or target_loc.get("locationName", "安平")
+            ) or target_loc.get("locationName", "台南安平")
 
-            # 取得時間段資料
-            time_periods = target_loc.get(
-                "LocationPeriods", {}
-            ).get("Daily", []) or target_loc.get("validTime", [])
+            # 解析 Daily 潮汐預報
+            daily_periods = []
+            if "LocationPeriods" in target_loc:
+                daily_periods = target_loc["LocationPeriods"].get("Daily", [])
+            elif "validTime" in target_loc:
+                daily_periods = target_loc.get("validTime", [])
 
-            if not time_periods:
-                print("錯誤：無法找到 daily 潮汐時間陣列")
+            if not daily_periods:
+                print("錯誤：未找到潮汐預報每日數據 (Daily/validTime)")
                 return
 
-            today_data = time_periods[0]
-            date_str = (
+            today_data = daily_periods[0]
+            date_str = str(
                 today_data.get("Date")
                 or today_data.get("startTime", "")[:10]
             )
 
-            # 解析乾滿潮事件
-            tide_events = []
-            time_list = today_data.get("TimePeriods", []) or today_data.get(
-                "tideTime", []
+            # 解析 TimePeriods (乾潮/滿潮時間點與潮高)
+            time_periods = (
+                today_data.get("TimePeriods", [])
+                or today_data.get("tideTime", [])
             )
 
-            for t in time_list:
-                tide_type = t.get("Tide") or t.get("tide", "")
-                raw_time = t.get("DateTime") or t.get("time", "")
-                time_display = raw_time[-8:-3] if len(raw_time) >= 8 else raw_time
-                height = (
-                    t.get("TideHeights", {}).get("AboveTWVD")
-                    if isinstance(t.get("TideHeights"), dict)
-                    else t.get("height", "")
+            tide_events = []
+            for tp in time_periods:
+                tide_type = tp.get("Tide") or tp.get("tide") or "潮汐"
+                raw_time = tp.get("DateTime") or tp.get("time") or "--:--"
+                time_display = (
+                    raw_time[-8:-3] if len(raw_time) >= 8 else raw_time
                 )
+
+                # 解析 TideHeights 下的 AboveTWVD (臺灣高程基準) 潮高
+                height = "--"
+                tide_heights = tp.get("TideHeights") or {}
+                if isinstance(tide_heights, dict):
+                    height = tide_heights.get("AboveTWVD") or tide_heights.get(
+                        "AboveTWVD_cm", "--"
+                    )
+                elif "height" in tp:
+                    height = tp.get("height")
 
                 tide_events.append(
                     {
                         "tide": tide_type,
                         "time": time_display,
-                        "height": height if height is not None else "--",
+                        "height": height,
                     }
                 )
 
