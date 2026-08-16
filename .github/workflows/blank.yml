@@ -10,22 +10,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 將儲存庫中的程式碼（包含 main.py）下載到虛擬機上
+      # 1. 下載儲存庫程式碼
       - name: Checkout repository code
         uses: actions/checkout@v4
 
-      # 2. 安裝並設定 Python 環境
+      # 2. 設定 Python 環境
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # 3. 安裝需要的第三方套件（若不需要可省略此步驟）
+      # 3. 安裝套件
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests
 
-      # 4. 執行你的 Python 腳本
+      # 4. 執行 Python 腳本抓取安平潮汐網頁
       - name: Execute main.py
         run: python main.py
+
+      # 5. 將產生的 anping_tide.html 自動 Commit 並 Push 回 GitHub 專案
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add anping_tide.html
+          git commit -m "Auto update Anping tide data [skip ci]" || exit 0
+          git push
